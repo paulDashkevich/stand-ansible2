@@ -2,74 +2,91 @@
 
 Стенд для практики к уроку «Автоматизация администрирования. Ansible.»  
 
-Разворачивается два сервера: `host1` и `host2`. При развертывании Vagrant запускается Ansible [playbook](provisioning/playbook.yml). 
+Разворачивается два сервера: `host1` и `host2`
 
 # Инструкция по применению
 ## Перед запуском
 
-Если вы еще не настроили Vagrant и VirtualBox, то вот краткая [инструкция](https://gitlab.com/otus_linux/docs/blob/master/vagrant_quick_start.md).
-
-Далее необходимо установить Ansible. Это можно сделать по [инструкции](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#latest-release-via-dnf-or-yum). Или достаточно: `yum install ansible`
+На хосте необходимо установить Ansible. Совсем достаточно: `yum install ansible`
 
 Проверим что Ansible установлен: `ansible --version`
-
+```
+# ansible --version
+ansible 2.9.10
+  config file = /home/paul/stands-ansible/ansible.cfg
+  configured module search path = [u'/root/.ansible/plugins/modules', u'/usr/share/ansible/plugins/modules']
+  ansible python module location = /usr/lib/python2.7/site-packages/ansible
+  executable location = /bin/ansible
+  python version = 2.7.5 (default, Apr  2 2020, 13:16:51) [GCC 4.8.5 20150623 (Red Hat 4.8.5-39)]
+```
 Все дальнейшие действия нужно делать из текущего каталога.
 
 ## Запускаем и работаем со стендом
 
 Поднимем виртуальные машины: `vagrant up`
 
-Запустим роль: `ansible-playbook fail2ban.yml`  
-Так выглядит основной playbook `fail2ban.yml`, который уже в свою очередь ссылается на роль `fail2ban`:
+Запустим плэйбук: `ansible-playbook nginx.yml`  
+Так выглядит основной playbook `nginx.yml`:
 ```yml
-- name: Fail2Ban # Имя таски
-  hosts: all # На каких хостах будет выполняться
-  become: True # Нужно ли нам sudo
-  roles: # Директива, указывающая, что будут использваоны роли
-    - fail2ban # Имя роли по каталогу
+---
+- name: NGINX | Install and configure NGINX
+  hosts: host1 host2
+  become: true
+  vars:
+    nginx_listen_port: 8080
+
+  tasks:
+    - name: NGINX | Install EPEL Repo package from standart repo
+      yum:
+        name: epel-release
+        state: present
+      tags:
+        - epel-package
+        - packages
+
+    - name: NGINX | Install NGINX package from EPEL Repo
+      yum:
+        name: nginx
+        state: latest
+      notify:
+        - restart nginx
+      tags:
+        - nginx-package
+        - packages
+
+    - name: NGINX | Create NGINX config file from template
+      template:
+        src: ./templates/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+      notify:
+        - reload nginx
+      tags:
+        - nginx-configuration
+    - name: mc | Install midnight-commander
+      yum:
+        name: mc
+        state: latest
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+        enabled: yes
+
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+
+    - name: start service
+      systemd:
+        name: nginx
+        state: started
+
 ```
-
-Если мы поправили конфигурационные файлы и хотим их заново скопировать на сервера:
-`ansible-playbook fail2ban.yml --tags "configuration"`
-
-Что еще можно попробовать:
-```bash
-ansible all -m ping # Пингануть сервера Ansibl-ом
-ansible all -m setup # Собрать данные с серверов
-ansible all -m setup -a 'filter=ansible_eth[0-2]' # Собрать данные и показать только сетевые интефейсы eth[0-2]
-ansible all -m setup -a 'filter=ansible_os_family' # Собрать данные и показать только семейство ОС
-ansible all -a 'uname -r' # Выполнить произвольную команду на серверах
+Таким образом, для проверки работы заходим на каждый хост и выполняем ss -tulpn
 ```
-
-# Некоторые полезные команды
-
-Создать дерево каталогов для роли:
-```bash
-ansible-galaxy init <rolename> 
-```
-
-Получить документацию по модулю:
-```bash
-ansible-doc <modulename>
-```
-
-Проверить синтаксис:
-```bash
-ansible-playbook fail2ban.yml --syntax-check
-```
-
-Посмотреть список хостов на которых будет выполняться роль. При этом сами 
-таски не выполняются.
-```bash
-ansible-playbook fail2ban.yml --list-hosts
-```
-
-Посмотреть все таски, которые входят в роль:
-```bash
-ansible-playbook fail2ban.yml --list-tasks
-```
-
-Посмотреть все теги в роли:
-```bash
-ansible-playbook fail2ban.yml --list-tags
+Netid  State      Recv-Q Send-Q          Local Address:Port                         Peer Address:Port
+tcp    LISTEN     0      128                         *:8080                                    *:*                   users:(("nginx",pid=4485,fd=6),("nginx",pid=4410,fd=6))
 ```
